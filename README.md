@@ -382,5 +382,4 @@ Each agent maintains its own chat context and can run standalone for testing pur
 
 ## License
 
-This project is for educational and demonstration purposes.#   A s s e s . a i  
- 
+This project is for educational and demonstration purposes.#
