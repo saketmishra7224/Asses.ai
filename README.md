@@ -1,4 +1,4 @@
-# asses.ai
+# Asses.ai
 
 An AI-powered mock interview platform that simulates real-world technical interviews with conversational AI, voice interactions, and comprehensive candidate assessment.
 
@@ -387,6 +387,10 @@ Each agent maintains its own chat context and can run standalone for testing pur
 
 ## License
 
+<<<<<<< HEAD
 This project is for educational and demonstration purposes.#   A s s e s . a i 
  
  
+=======
+This project is for educational and demonstration purposes.#
+>>>>>>> fcf7df1376fdfd0dcbab3d16f20b65817e5eac89
