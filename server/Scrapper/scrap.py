@@ -6,37 +6,65 @@ import requests
 import base64
 import json
 
-def repository_details(repo_url):
-    """Fetch repository details like description and README content."""
-    parts = repo_url.strip('/').split('/')
-    if len(parts) != 5:
-        print("Invalid repository URL format")
-        return []
+# Network hardening: every external call gets a timeout so a hung API can
+# never hang (and crash) the /api/resume/upload endpoint. One bad repo must
+# not kill the whole batch either — failures are isolated per repo.
+HTTP_TIMEOUT = float(os.getenv("SCRAP_TIMEOUT", "10"))
+MAX_REPOS = int(os.getenv("SCRAP_MAX_REPOS", "10"))
 
-    owner, repo = parts[3], parts[4]
-    api_url = f"https://api.github.com/repos/{owner}/{repo}"
-    response = requests.get(api_url)
-    
-    if response.status_code != 200:
-        print(f"Error: Unable to fetch repository details for {repo_url}")
+
+def _github_headers():
+    headers = {"Accept": "application/vnd.github+json"}
+    token = os.getenv("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def repository_details(repo_url):
+    """Fetch repository details like description and README content.
+
+    Never raises: returns [] when the repo is unreachable/private/invalid.
+    """
+    try:
+        parts = repo_url.strip('/').split('/')
+        if len(parts) != 5:
+            print(f"Invalid repository URL format: {repo_url}")
+            return []
+
+        owner, repo = parts[3], parts[4]
+        api_url = f"https://api.github.com/repos/{owner}/{repo}"
+        response = requests.get(api_url, headers=_github_headers(), timeout=HTTP_TIMEOUT)
+
+        if response.status_code != 200:
+            print(f"Error: Unable to fetch repository details for {repo_url} (HTTP {response.status_code})")
+            return []
+
+        repo_details = []
+        data = response.json()
+        project_data = data.get('description', 'No description available')
+        repo_details.append(project_data)
+
+        readme_url = f"{api_url}/readme"
+        readme_response = requests.get(readme_url, headers=_github_headers(), timeout=HTTP_TIMEOUT)
+
+        if readme_response.status_code == 200:
+            try:
+                readme_data = readme_response.json()
+                decoded_content = base64.b64decode(readme_data['content']).decode('utf-8')
+                repo_details.append(decoded_content)
+            except Exception as e:
+                repo_details.append(f"Error: Unable to decode README content ({e}).")
+        else:
+            repo_details.append("Error: Unable to fetch README content.")
+
+        return repo_details
+    except requests.exceptions.RequestException as e:
+        print(f"Error: Network failure fetching {repo_url} ({type(e).__name__}: {e})")
         return []
-    
-    repo_details = []
-    data = response.json()
-    project_data = data.get('description', 'No description available')
-    repo_details.append(project_data)
-    
-    readme_url = f"{api_url}/readme"
-    readme_response = requests.get(readme_url)
-    
-    if readme_response.status_code == 200:
-        readme_data = readme_response.json()
-        decoded_content = base64.b64decode(readme_data['content']).decode('utf-8')
-        repo_details.append(decoded_content)
-    else:
-        repo_details.append("Error: Unable to fetch README content.")
-    
-    return repo_details
+    except Exception as e:
+        print(f"Error: Unexpected failure fetching {repo_url} ({e})")
+        return []
 
 def leetcode_details(username):
     """Fetch LeetCode problem-solving stats."""
@@ -69,7 +97,7 @@ def leetcode_details(username):
         "variables": {"username": username}
     }
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(query))
+        response = requests.post(url, headers=headers, data=json.dumps(query), timeout=HTTP_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         return json.dumps(data.get("data", {}).get("matchedUser", {}), indent=4)
@@ -113,19 +141,35 @@ def get_github_details(file_path):
     _, ext = os.path.splitext(file_path)
     links = extract_links_from_pdf(file_path) if ext.lower() == ".pdf" else extract_links_from_text(extract_text_from_docx(file_path))
     github_links = [link for link in links if "github.com" in link and link.count('/') >= 4]
-    return [repository_details(link) for link in github_links]
+    if len(github_links) > MAX_REPOS:
+        print(f"Found {len(github_links)} repos, fetching first {MAX_REPOS} (SCRAP_MAX_REPOS).")
+        github_links = github_links[:MAX_REPOS]
+    # Per-link isolation: repository_details never raises, but guard anyway.
+    results = []
+    for link in github_links:
+        try:
+            results.append(repository_details(link))
+        except Exception as e:
+            print(f"Error: Skipping {link} ({e})")
+            results.append([])
+    return results
 
 def get_leetcode_details(file_path):
     """Extract and return LeetCode user details from a resume."""
     if not os.path.exists(file_path):
         print("Error: File not found!")
         return ""
-    
+
     _, ext = os.path.splitext(file_path)
     links = extract_links_from_pdf(file_path) if ext.lower() == ".pdf" else extract_links_from_text(extract_text_from_docx(file_path))
     leetcode_links = [link for link in links if "leetcode.com" in link]
     if leetcode_links:
-        match = re.search(r'leetcode.com/u/([a-zA-Z0-9_]+)', leetcode_links[0])
-        return leetcode_details(match.group(1)) if match else "Invalid URL"
+        raw = leetcode_links[0].rstrip("/").split("?")[0].split("#")[0]
+        # Supports both https://leetcode.com/u/username and https://leetcode.com/username
+        match = re.search(r'leetcode\.com/(?:u/)?([a-zA-Z0-9_-]+)/?$', raw)
+        # Guard against problem-list URLs like leetcode.com/problems/...
+        if match and match.group(1).lower() not in ("problems", "contest", "discuss", "explore", "u"):
+            return leetcode_details(match.group(1)) if match else "Invalid URL"
+        return "Invalid URL"
     return "No LeetCode link found."
 

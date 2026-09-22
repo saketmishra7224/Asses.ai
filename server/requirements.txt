@@ -7,9 +7,6 @@ google-generativeai
 pyaudio
 keyboard
 uvicorn
-fitz
-docx
-re
-os
-base64
-json
+PyMuPDF
+python-docx
+python-multipart
