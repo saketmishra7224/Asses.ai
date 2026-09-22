@@ -265,16 +265,29 @@ cp server/.env.example server/.env
 
 | Variable | Required | Default | Description |
 | :--- | :---: | :---: | :--- |
-| `GOOGLE_API_KEY` | Recommended | *(empty)* | Google Gemini API key. If empty, the app runs in mock mode until connected. |
-| `ASSEMBLYAI_API_KEY` | Optional | *(empty)* | AssemblyAI API key for audio file transcription proxy. |
+| `GROQ_API_KEY` | Recommended | *(empty)* | Groq API key (ultra-fast inference, https://console.groq.com/keys). If empty and no Google key is set, the app runs in mock mode. |
+| `GROQ_MODEL` | Optional | `llama-3.3-70b-versatile` | Groq model variant to use (e.g. `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`). |
+| `GOOGLE_API_KEY` | Optional | *(empty)* | Google Gemini API key (alternative / fallback). |
 | `GEMINI_MODEL` | Optional | `gemini-3.6-flash` | Gemini model variant to use. |
+| `ASSEMBLYAI_API_KEY` | Optional | *(empty)* | AssemblyAI API key for audio file transcription proxy. |
 | `REDIS_HOST` | Optional | `localhost` | Redis host (`redis` inside Docker Compose). |
 | `REDIS_PORT` | Optional | `6379` | Redis port. |
 | `GITHUB_TOKEN` | Optional | *(empty)* | GitHub personal access token to prevent rate-limiting during repository scraping. |
 | `SCRAP_TIMEOUT` | Optional | `10` | Timeout in seconds for individual web scraping network calls. |
 | `SCRAP_MAX_REPOS` | Optional | `10` | Maximum number of repositories to scrape per resume. |
+| `RAG_INDEX_NAME` | Optional | `idx:candidate_chunks` | Redis Stack vector index for candidate knowledge. |
+| `RAG_KEY_PREFIX` | Optional | `rag:` | Key namespace prefix for RAG chunks. |
+| `RAG_EMBEDDING_PROVIDER` | Optional | `local` | Embedding provider (`local` hash-based, or `gemini`). |
+| `RAG_EMBEDDING_MODEL` | Optional | `models/gemini-embedding-001` | Embedding model (when using `gemini` provider). |
+| `RAG_EMBEDDING_DIM` | Optional | `768` | Vector dimension: `768` default. |
+| `RAG_TOP_K` | Optional | `4` | Default retrieval depth. |
+| `RAG_PLANNER_STRATEGY` | Optional | `heuristic` | Question planner: `heuristic` or `llm`. |
+| `RAG_ASSESS_MODE` | Optional | `llm` | Answer assessment: `llm` or `heuristic`. |
+| `RAG_MAX_TURNS` | Optional | `20` | Max technical turns before guided wrap-up. |
+| `RAG_CHUNK_CHARS` / `RAG_CHUNK_OVERLAP` | Optional | `1200` / `150` | Chunk window size / overlap. |
+| `RAG_TTL_SECONDS` | Optional | `604800` | Chunk key expiry (7 days, `0` disables). |
 
-> 💡 **Live Key Injection:** You can also enter your `GOOGLE_API_KEY` and `ASSEMBLYAI_API_KEY` directly in the Web UI via the **"Connect Gemini"** modal. The backend saves it to `server/.env` automatically without requiring a server restart.
+> 💡 **Live Key Injection:** You can also enter your `GROQ_API_KEY` (or `GOOGLE_API_KEY` and `ASSEMBLYAI_API_KEY`) directly in the Web UI via the **"Connect API Key"** modal. The backend saves it to `server/.env` automatically without requiring a server restart.
 
 ### 2. Client Environment (`client/.env`)
 
@@ -287,6 +300,24 @@ cp client/.env.example client/.env
 | Variable | Required | Default | Description |
 | :--- | :---: | :---: | :--- |
 | `VITE_API_URL` | Optional | *(empty / same-origin)* | Set to `http://localhost:8000` for standalone local client development. In Docker, leave empty to leverage Nginx proxy routing. |
+
+### 3. RAG Security & Data Handling
+
+```
+Resume + GitHub + LeetCode
+↓ Normalization ↓ Chunking ↓ Embeddings (gemini-embedding-001, 768-d)
+↓ Redis Stack Vector Search (idx:candidate_chunks, HNSW cosine)
+↓ Hybrid Retrieval (KNN + full-text, RRF fusion)
+↓ Question Planner → Context Builder → Gemini
+↓ Adaptive Interview → Structured Evaluation
+```
+
+* **Candidate isolation**: every chunk carries a `candidate_id` TAG; all retrieval filters on it at the RediSearch query level, keys live under `rag:{candidate_id}:*`, and results are re-checked in Python. Retrieval for one candidate can never return another's data.
+* **Untrusted input**: resume/README/answer text is sanitized at prompt-build time (control chars stripped; forged `[INTERVIEW_DONE]` / `[CANDIDATE EVIDENCE]` markers neutralized); the system prompt treats evidence as data, never instructions.
+* **Secrets**: keys live only in git-ignored, docker-ignored `server/.env` and are never returned by any endpoint or written to logs.
+* **Graceful degradation**: Redis down → in-memory sessions, RAG disabled with warnings; bad key / malformed model output → heuristic fallbacks. The API never 500s on RAG failures.
+* **Limits**: 10 MB uploads, 10 repos/resume, 10 s scrape timeouts, 7-day chunk TTL, 20-turn interview budget.
+* Full RAG reference (schema, index design, phases): [`server/RAG/README.md`](server/RAG/README.md).
 
 ---
 
@@ -454,8 +485,8 @@ Located in [`client/src/App.jsx`](file:///c:/Users/Saket/OneDrive/Desktop/asses.
 #### 1. Redis container fails to start or Docker is not installed
 - **Solution**: No action is needed! Asses.ai contains a built-in `_MemoryRedis` fallback that stores sessions and history in server memory during local development. If you wish to use Redis, ensure Docker Desktop is running.
 
-#### 2. The AI responses say `[Mock interviewer - mock reply, set GOOGLE_API_KEY for live AI]`
-- **Solution**: Click the **"Connect Gemini"** button in the top right corner of the web interface, paste your Google Gemini API Key, and click **"Save & Verify"**. The key will be tested live and saved to `server/.env`.
+#### 2. The AI responses say `[Mock interviewer - mock reply, set GROQ_API_KEY for live AI]`
+- **Solution**: Click the **"Connect Groq key"** button in the top right corner of the web interface (or banner), paste your Groq API Key (`gsk_...`), and click **"Connect & verify"**. The key will be tested live and saved to `server/.env`. Alternatively, paste `GROQ_API_KEY=your_key` directly into `server/.env`.
 
 #### 3. GitHub scraping returns an error or warning during resume upload
 - **Solution**:

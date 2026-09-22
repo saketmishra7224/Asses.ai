@@ -58,12 +58,13 @@ export const api = {
       body: JSON.stringify({ session_id: sessionId }),
     }).then(handle);
   },
-  /** Connect API keys at runtime: verifies the Google key live and persists to server/.env. */
-  saveApiKey({ googleApiKey, assemblyaiApiKey, validateKey = true }) {
+  /** Connect API keys at runtime: verifies the Groq or Google key live and persists to server/.env. */
+  saveApiKey({ groqApiKey, googleApiKey, assemblyaiApiKey, validateKey = true }) {
     return fetch(`${BASE}/api/settings/key`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        groq_api_key: groqApiKey || null,
         google_api_key: googleApiKey || null,
         assemblyai_api_key: assemblyaiApiKey || null,
         validate_key: validateKey,

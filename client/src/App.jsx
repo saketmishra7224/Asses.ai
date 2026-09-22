@@ -91,6 +91,7 @@ export default function App() {
   const [mockMode, setMockMode] = useState(false)
 
   const [keyOpen, setKeyOpen] = useState(false)
+  const [groqKey, setGroqKey] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [assemblyKey, setAssemblyKey] = useState('')
   const [keySaving, setKeySaving] = useState(false)
@@ -108,9 +109,12 @@ export default function App() {
 
   useEffect(() => {
     if (!health) return
-    if (!health.gemini_configured) {
+    const aiConfigured = health.ai_configured ?? (health.groq_configured || health.gemini_configured)
+    if (!aiConfigured) {
       setMockMode(true)
       setKeyOpen(true) // prompt for the key when backend has none
+    } else {
+      setMockMode(false)
     }
   }, [health])
 
@@ -249,21 +253,30 @@ export default function App() {
   }, [])
 
   const connectKey = useCallback(async () => {
-    if (!apiKey.trim() && !assemblyKey.trim()) {
-      setKeyErr('Paste your Google API key first (find it at Google AI Studio → Get API key).')
+    if (!groqKey.trim() && !apiKey.trim() && !assemblyKey.trim()) {
+      setKeyErr('Paste your Groq API key first (find it at console.groq.com/keys).')
       return
     }
     setKeySaving(true)
     setKeyErr('')
     setKeyMsg('')
     try {
-      const res = await api.saveApiKey({ googleApiKey: apiKey.trim(), assemblyaiApiKey: assemblyKey.trim(), validateKey: true })
+      const res = await api.saveApiKey({
+        groqApiKey: groqKey.trim(),
+        googleApiKey: apiKey.trim(),
+        assemblyaiApiKey: assemblyKey.trim(),
+        validateKey: true,
+      })
       const h = await api.health().catch(() => null)
       if (h) setHealth(h)
-      if (res.gemini_configured) {
+      if (res.groq_configured) {
+        setMockMode(false)
+        setGroqKey('')
+        setKeyMsg(`Groq connected and verified (${res.model || 'llama-3.3-70b-versatile'}) — live ultra-fast AI answers!`)
+      } else if (res.gemini_configured) {
         setMockMode(false)
         setApiKey('')
-        setKeyMsg('Gemini connected and verified — live AI answers from now on.')
+        setKeyMsg('Gemini connected and verified — live AI answers.')
       } else if (res.assemblyai_configured) {
         setAssemblyKey('')
         setKeyMsg('AssemblyAI key saved for voice transcription.')
@@ -273,7 +286,7 @@ export default function App() {
     } finally {
       setKeySaving(false)
     }
-  }, [apiKey, assemblyKey])
+  }, [groqKey, apiKey, assemblyKey])
 
   const downloadTranscript = useCallback(() => {    const blob = new Blob([JSON.stringify({ session_id: sessionId, phase, profile, history, feedback }, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
@@ -306,8 +319,8 @@ export default function App() {
             {health && <Badge tone="slate">store: {health.redis}</Badge>}
             {health && (
               <button onClick={() => setKeyOpen((v) => !v)} title="Connect / change API keys">
-                <Badge tone={health.gemini_configured ? 'green' : 'amber'}>
-                  {health.gemini_configured ? 'Gemini live' : mockMode ? 'Mock AI (no key)' : 'AI'} 🔑
+                <Badge tone={health.groq_configured || health.gemini_configured ? 'green' : 'amber'}>
+                  {health.groq_configured ? 'Groq live ⚡' : health.gemini_configured ? 'Gemini live 🔑' : mockMode ? 'Mock AI (no key)' : 'AI'}
                 </Badge>
               </button>
             )}
@@ -342,31 +355,32 @@ export default function App() {
 
         {mockMode && (
           <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-200">
-            Running in <b>mock-AI mode</b> (no <code>GOOGLE_API_KEY</code> on the backend). The full UI flow works.{' '}
-            <button className="underline font-bold" onClick={() => setKeyOpen(true)}>Connect your Gemini key →</button>
+            Running in <b>mock-AI mode</b> (no <code>GROQ_API_KEY</code> on the backend). The full UI flow works.{' '}
+            <button className="underline font-bold" onClick={() => setKeyOpen(true)}>Connect your Groq key →</button>
           </div>
         )}
 
         {keyOpen && (
           <div className="mb-4 rounded-2xl border border-violet-500/30 bg-violet-500/5 p-4">
             <div className="flex items-center gap-2">
-              <div className="text-sm font-bold">🔑 Connect Google AI key</div>
-              {health?.gemini_configured && <Badge tone="green">connected</Badge>}
+              <div className="text-sm font-bold">⚡ Connect Groq API key</div>
+              {health?.groq_configured && <Badge tone="green">Groq active ⚡</Badge>}
+              {health?.gemini_configured && <Badge tone="slate">Gemini active</Badge>}
               <button onClick={() => setKeyOpen(false)} className="ml-auto text-xs text-slate-400 hover:text-white">✕ close</button>
             </div>
             <p className="mt-1 text-xs text-slate-400">
-              Get a key at <code className="rounded bg-white/10 px-1">aistudio.google.com → Get API key</code>, paste it below and hit Connect.
-              The backend verifies it with one tiny live call and saves it to <code>server/.env</code> (git-ignored) — no restart needed.
+              Get a key at <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="underline text-violet-300">console.groq.com/keys</a>, paste it below and hit Connect.
+              The backend verifies it with one live call and saves it to <code>server/.env</code> (git-ignored) — no restart needed.
             </p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               <div>
-                <label className="text-xs font-semibold text-slate-300">Google API key (Gemini)</label>
+                <label className="text-xs font-semibold text-slate-300">Groq API key (Recommended)</label>
                 <input
                   type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
+                  value={groqKey}
+                  onChange={(e) => setGroqKey(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') connectKey() }}
-                  placeholder="AIza…"
+                  placeholder="gsk_…"
                   autoComplete="off"
                   className="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm font-mono outline-none focus:border-violet-400"
                 />
@@ -384,13 +398,25 @@ export default function App() {
                 />
               </div>
             </div>
+            <div className="mt-2">
+              <label className="text-xs font-semibold text-slate-400">Google Gemini key <span className="font-normal text-slate-500">(alternative / fallback)</span></label>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') connectKey() }}
+                placeholder="AIza… (optional)"
+                autoComplete="off"
+                className="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm font-mono outline-none focus:border-violet-400"
+              />
+            </div>
             {keyErr && <div className="mt-2 rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2 text-xs text-red-300">{keyErr}</div>}
             {keyMsg && <div className="mt-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 px-3 py-2 text-xs text-emerald-300">{keyMsg}</div>}
             <div className="mt-3 flex gap-2">
               <button onClick={connectKey} disabled={keySaving} className="rounded-xl bg-violet-600 px-4 py-2 text-xs font-bold hover:bg-violet-500 disabled:opacity-50">
-                {keySaving ? 'Verifying with Google…' : 'Connect & verify'}
+                {keySaving ? 'Verifying with AI provider…' : 'Connect & verify'}
               </button>
-              <span className="self-center text-[11px] text-slate-500">Prefer files? Paste the key into <code>server/.env</code> after <code>GOOGLE_API_KEY=</code> and restart the backend.</span>
+              <span className="self-center text-[11px] text-slate-500">Prefer files? Paste the key into <code>server/.env</code> after <code>GROQ_API_KEY=</code> and restart the backend.</span>
             </div>
           </div>
         )}
@@ -599,7 +625,7 @@ export default function App() {
               <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-xs text-slate-400">
                 <div className="font-bold text-slate-200 text-sm">How it maps to the backend</div>
                 <ul className="mt-1 space-y-1 list-disc pl-4">
-                  <li>Chat → <code>POST /api/interview/chat</code> → <code>generate.py</code> (Gemini 3.6 Flash)</li>
+                  <li>Chat → <code>POST /api/interview/chat</code> → <code>generate.py</code> (Groq Llama 3.3 / Gemini)</li>
                   <li>Intro prompt from <code>Agents/intro.py</code>, technical from <code>Agents/concept.py</code></li>
                   <li>Voice in-browser; server <code>/api/transcribe</code> (AssemblyAI) optional</li>
                 </ul>
@@ -645,7 +671,7 @@ export default function App() {
           <div className="flex flex-wrap gap-x-6 gap-y-1">
             <span>Backend: <code>POST /api/session · /api/resume/upload · /api/interview/chat · /api/interview/end</code></span>
             <span>Docs: <code>{api.base}/docs</code> when server runs</span>
-            <span>Needs: <code>GOOGLE_API_KEY</code> (Gemini) · <code>ASSEMBLYAI_API_KEY</code> (optional STT) · Redis via <code>docker compose up</code></span>
+            <span>AI: <code>GROQ_API_KEY</code> (Groq Llama 3.3) · <code>ASSEMBLYAI_API_KEY</code> (optional STT) · Redis via <code>docker compose up</code></span>
           </div>
         </footer>
       </main>

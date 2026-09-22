@@ -21,6 +21,19 @@ class _MemoryRedis:
         self._kv[key] = value
         return True
 
+    def delete(self, *keys):
+        deleted = 0
+        for k in keys:
+            if k in self._kv:
+                del self._kv[k]
+                deleted += 1
+            if k in self._counters:
+                del self._counters[k]
+        return deleted
+
+    def exists(self, *keys):
+        return sum(1 for k in keys if k in self._kv or k in self._counters)
+
     def incr(self, key):
         self._counters[key] = int(self._counters.get(key, 0)) + 1
         # mirror into kv for visibility
@@ -31,6 +44,24 @@ class _MemoryRedis:
         import fnmatch
 
         return [k for k in self._kv.keys() if fnmatch.fnmatch(k, pattern)]
+
+    def mget(self, keys, *args):
+        all_keys = list(keys) if isinstance(keys, (list, tuple)) else [keys] + list(args)
+        return [self._kv.get(k) for k in all_keys]
+
+    def expire(self, key, time):
+        return True
+
+    def flushdb(self):
+        self._kv.clear()
+        self._counters.clear()
+        return True
+
+    def flushall(self):
+        return self.flushdb()
+
+    def close(self):
+        pass
 
 
 def start_redis_container():

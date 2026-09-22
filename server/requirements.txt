@@ -1,12 +1,15 @@
 fastapi
 requests
-redis
+redis>=5.0  # RediSearch FT.CREATE / VECTOR (KNN) API used by server/RAG
+numpy  # FLOAT32 vector serialization for the Redis vector index
 python-dotenv
 pyttsx3
-google-generativeai
+google-generativeai  # fallback interviewer + RAG embeddings
+groq  # ultra-fast LLM inference for interview generation and evaluation
 pyaudio
 keyboard
 uvicorn
 PyMuPDF
 python-docx
 python-multipart
+pytest  # RAG + regression tests (server/tests)

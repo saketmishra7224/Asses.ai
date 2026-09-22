@@ -25,6 +25,7 @@ def repository_details(repo_url):
     """Fetch repository details like description and README content.
 
     Never raises: returns [] when the repo is unreachable/private/invalid.
+    Returns: [description (str), readme (str), language (str)]
     """
     try:
         parts = repo_url.strip('/').split('/')
@@ -58,6 +59,8 @@ def repository_details(repo_url):
         else:
             repo_details.append("Error: Unable to fetch README content.")
 
+        # Primary language powers RAG technology chunks; "" when unknown (appended last: index 2)
+        repo_details.append(data.get('language') or "")
         return repo_details
     except requests.exceptions.RequestException as e:
         print(f"Error: Network failure fetching {repo_url} ({type(e).__name__}: {e})")
@@ -65,6 +68,7 @@ def repository_details(repo_url):
     except Exception as e:
         print(f"Error: Unexpected failure fetching {repo_url} ({e})")
         return []
+
 
 def leetcode_details(username):
     """Fetch LeetCode problem-solving stats."""
@@ -104,6 +108,7 @@ def leetcode_details(username):
     except requests.exceptions.RequestException as e:
         return f"Error: {e}"
 
+
 def extract_links_from_pdf(pdf_path):
     """Extract all clickable and text-based links from a PDF file."""
     links = []
@@ -118,6 +123,7 @@ def extract_links_from_pdf(pdf_path):
         print(f"Error extracting PDF links: {e}")
     return list(set(links))
 
+
 def extract_text_from_docx(docx_path):
     """Extract text from a DOCX file."""
     try:
@@ -127,17 +133,43 @@ def extract_text_from_docx(docx_path):
         print(f"Error extracting DOCX text: {e}")
         return ""
 
+
+def extract_resume_text(file_path):
+    """Return the full text of a PDF/DOCX resume (used by RAG ingestion).
+
+    Link extractors only keep URLs; ingestion needs the body text.
+    Returns "" when the file is missing or unreadable (never raises).
+    """
+    if not os.path.exists(file_path):
+        return ""
+    try:
+        _, ext = os.path.splitext(file_path)
+        if ext.lower() == ".pdf":
+            doc = fitz.open(file_path)
+            return "\n".join(page.get_text("text") for page in doc)
+        return extract_text_from_docx(file_path)
+    except Exception as e:
+        print(f"Error extracting resume text: {e}")
+        return ""
+
+
 def extract_links_from_text(text):
     """Extract all links from text using regex."""
     url_pattern = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
     return url_pattern.findall(text)
 
-def get_github_details(file_path):
-    """Extract and return GitHub repository details from a resume."""
+
+def get_github_entries(file_path):
+    """Like get_github_details but keeps the source URL with each result.
+
+    Returns [{"url": link, "details": [description, readme, language]}].
+    RAG ingestion needs the URL for repository metadata; the plain
+    get_github_details() drops it.
+    """
     if not os.path.exists(file_path):
         print("Error: File not found!")
         return []
-    
+
     _, ext = os.path.splitext(file_path)
     links = extract_links_from_pdf(file_path) if ext.lower() == ".pdf" else extract_links_from_text(extract_text_from_docx(file_path))
     github_links = [link for link in links if "github.com" in link and link.count('/') >= 4]
@@ -145,14 +177,20 @@ def get_github_details(file_path):
         print(f"Found {len(github_links)} repos, fetching first {MAX_REPOS} (SCRAP_MAX_REPOS).")
         github_links = github_links[:MAX_REPOS]
     # Per-link isolation: repository_details never raises, but guard anyway.
-    results = []
+    entries = []
     for link in github_links:
         try:
-            results.append(repository_details(link))
+            entries.append({"url": link, "details": repository_details(link)})
         except Exception as e:
             print(f"Error: Skipping {link} ({e})")
-            results.append([])
-    return results
+            entries.append({"url": link, "details": []})
+    return entries
+
+
+def get_github_details(file_path):
+    """Extract and return GitHub repository details from a resume."""
+    return [e["details"] for e in get_github_entries(file_path)]
+
 
 def get_leetcode_details(file_path):
     """Extract and return LeetCode user details from a resume."""
@@ -172,4 +210,3 @@ def get_leetcode_details(file_path):
             return leetcode_details(match.group(1)) if match else "Invalid URL"
         return "Invalid URL"
     return "No LeetCode link found."
-
